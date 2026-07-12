@@ -1,0 +1,48 @@
+name: Evidence-based AI Review
+description: PR差分、削除シンボル検索、CI結果を使って根拠のあるレビューだけを投稿します。
+
+inputs:
+  openai-api-key:
+    description: OpenAI API key
+    required: true
+  github-token:
+    description: GitHub token used to read checks and update the PR comment
+    required: true
+  model:
+    description: OpenAI model
+    required: false
+    default: gpt-5-mini
+  max-diff-chars:
+    description: Maximum character budget distributed across changed files
+    required: false
+    default: "30000"
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 20
+
+    - name: Collect review input
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        AI_REVIEW_MAX_DIFF_CHARS: ${{ inputs.max-diff-chars }}
+      run: node "$GITHUB_ACTION_PATH/scripts/collect-input.mjs"
+
+    - name: Run AI review
+      shell: bash
+      env:
+        OPENAI_API_KEY: ${{ inputs.openai-api-key }}
+        AI_REVIEW_MODEL: ${{ inputs.model }}
+      run: node "$GITHUB_ACTION_PATH/scripts/review.mjs"
+
+    - name: Publish review comment
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+      run: node "$GITHUB_ACTION_PATH/scripts/publish-comment.mjs"
+

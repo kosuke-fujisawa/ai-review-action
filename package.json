@@ -1,0 +1,14 @@
+{
+  "name": "ai-review-action",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test scripts/*.test.mjs",
+    "check": "node --check scripts/collect-input.mjs && node --check scripts/review.mjs && node --check scripts/publish-comment.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
+
