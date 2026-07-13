@@ -62,11 +62,11 @@ test("parseReviewJsonは高確信度の重大指摘だけを最大3件残す", (
       file: "src/example.js",
       line: index + 1,
       title: `指摘${index + 1}`,
-      body: "再現可能な問題です。",
+      body: "git ls-filesが未ステージの追跡ファイルを列挙します。",
       category: "runtime_bug",
-      suggestedVerificationCommand: "node --test",
+      suggestedVerificationCommand: "git ls-files --cached '*.swift'",
       verification: { probe: "git_ls_files", arguments: ["--cached", "*.swift"], expected: "unstaged_tracked_file_is_included" },
-      executionPath: "入力から対象処理へ到達する",
+      executionPath: "レビュー処理がgit ls-files --cachedの出力をステージ済み変更として扱う",
       counterEvidence: "正常系テストでは反証されない",
     })),
     {
@@ -137,6 +137,25 @@ test("parseReviewJsonは未実行の提案コマンドだけの指摘を棄却�
   };
 
   const result = parseReviewJson(JSON.stringify({ status: "completed", findings: [finding] }));
+
+  assert.deepEqual(result.findings, []);
+});
+
+test("parseReviewJsonは指摘内容と無関係な検証プローブを棄却する", () => {
+  const finding = {
+    severity: "high", confidence: "high", category: "runtime_bug",
+    file: "Sources/JournalEntry.swift", line: 12,
+    title: "SwiftDataの一意制約で保存に失敗する",
+    body: "同じ日の記録を保存すると一意制約違反になります。",
+    suggestedVerificationCommand: "xcodebuild test -scheme Ambit",
+    verification: { probe: "git_ls_files", arguments: ["--cached", "*.swift"], expected: "unstaged_tracked_file_is_included" },
+    executionPath: "同じ日付のJournalEntryをModelContextへinsertしてsaveする",
+    counterEvidence: "保存テストは未確認",
+  };
+
+  const result = parseReviewJson(JSON.stringify({ status: "completed", findings: [finding] }), {
+    verifyProbe: () => ({ verified: true, summary: "未ステージ追跡ファイルが列挙された" }),
+  });
 
   assert.deepEqual(result.findings, []);
 });

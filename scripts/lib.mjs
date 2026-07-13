@@ -257,6 +257,23 @@ export function extractResponseText(data) {
   return chunks.join("\n");
 }
 
+export function verificationSupportsFinding(finding) {
+  if (!finding?.verification || typeof finding.verification !== "object") {
+    return false;
+  }
+
+  if (finding.verification.probe === "git_ls_files") {
+    const command = finding.suggestedVerificationCommand?.trim() || "";
+    const claim = [finding.title, finding.body, finding.executionPath]
+      .filter((value) => typeof value === "string")
+      .join("\n");
+
+    return /^git\s+ls-files(?:\s|$)/i.test(command) && /git\s+ls-files/i.test(claim);
+  }
+
+  return false;
+}
+
 export function parseReviewJson(text, context = {}) {
   const parsed = JSON.parse(text);
   const findings = Array.isArray(parsed.findings) ? parsed.findings : [];
@@ -277,6 +294,7 @@ export function parseReviewJson(text, context = {}) {
           typeof finding.executionPath === "string" && finding.executionPath.length > 0 &&
           typeof finding.counterEvidence === "string" && finding.counterEvidence.length > 0;
         if (!verified) return null;
+        if (!verificationSupportsFinding(finding)) return null;
         const verificationResult = (context.verifyProbe || runVerificationProbe)(finding.verification);
         if (!verificationResult?.verified) return null;
         if (finding.category === "compilation_error" && context.buildSucceeded) {
