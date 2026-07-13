@@ -7,6 +7,7 @@ import {
   collectPaginatedItems,
   extractDeletedSymbols,
   parseReviewJson,
+  runVerificationProbe,
   shouldSkipReview,
   truncateText,
 } from "./lib.mjs";
@@ -63,7 +64,8 @@ test("parseReviewJsonは高確信度の重大指摘だけを最大3件残す", (
       title: `指摘${index + 1}`,
       body: "再現可能な問題です。",
       category: "runtime_bug",
-      verificationCommand: "node --test",
+      suggestedVerificationCommand: "node --test",
+      verification: { probe: "git_ls_files", arguments: ["--cached", "*.swift"], expected: "unstaged_tracked_file_is_included" },
       executionPath: "入力から対象処理へ到達する",
       counterEvidence: "正常系テストでは反証されない",
     })),
@@ -75,7 +77,8 @@ test("parseReviewJsonは高確信度の重大指摘だけを最大3件残す", (
       title: "確信度不足",
       body: "推測を含みます。",
       category: "runtime_bug",
-      verificationCommand: "node --test",
+      suggestedVerificationCommand: "node --test",
+      verification: { probe: "git_ls_files", arguments: ["--cached"], expected: "unstaged_tracked_file_is_included" },
       executionPath: "実行経路",
       counterEvidence: "反証結果",
     },
@@ -87,13 +90,16 @@ test("parseReviewJsonは高確信度の重大指摘だけを最大3件残す", (
       title: "軽微な指摘",
       body: "動作には影響しません。",
       category: "runtime_bug",
-      verificationCommand: "node --test",
+      suggestedVerificationCommand: "node --test",
+      verification: { probe: "git_ls_files", arguments: ["--cached"], expected: "unstaged_tracked_file_is_included" },
       executionPath: "実行経路",
       counterEvidence: "反証結果",
     },
   ];
 
-  const result = parseReviewJson(JSON.stringify({ status: "completed", findings }));
+  const result = parseReviewJson(JSON.stringify({ status: "completed", findings }), {
+    verifyProbe: () => ({ verified: true, summary: "期待値と一致" }),
+  });
 
   assert.equal(result.findings.length, 3);
   assert.ok(result.findings.every((finding) => finding.confidence === "high"));
@@ -109,16 +115,82 @@ test("parseReviewJsonは根拠不足とBuild成功に反するコンパイルエ
     title: "削除型への参照",
     body: "コンパイルできません。",
     category: "compilation_error",
-    verificationCommand: "git grep -n -w LegacyStore HEAD",
+    suggestedVerificationCommand: "git grep -n -w LegacyStore HEAD",
+    verification: { probe: "git_ls_files", arguments: ["--cached"], expected: "unstaged_tracked_file_is_included" },
     executionPath: "AppからLegacyStoreを生成する",
     counterEvidence: "Build成功を確認済み",
   };
   const result = parseReviewJson(JSON.stringify({
     status: "completed",
     findings: [base, { ...base, title: "場所なし", line: null }],
-  }), { buildSucceeded: true, deletedSymbolReferences: [] });
+  }), { buildSucceeded: true, deletedSymbolReferences: [], verifyProbe: () => ({ verified: true }) });
 
   assert.deepEqual(result.findings, []);
+});
+
+test("parseReviewJsonは未実行の提案コマンドだけの指摘を棄却する", () => {
+  const finding = {
+    severity: "high", confidence: "high", category: "runtime_bug",
+    file: "scripts/review.mjs", line: 1, title: "誤検知", body: "問題です。",
+    suggestedVerificationCommand: "git ls-files --cached '*.swift'",
+    executionPath: "レビュー実行時", counterEvidence: "反証なし",
+  };
+
+  const result = parseReviewJson(JSON.stringify({ status: "completed", findings: [finding] }));
+
+  assert.deepEqual(result.findings, []);
+});
+
+test("parseReviewJsonはプローブ結果が期待と不一致の指摘を棄却する", () => {
+  const finding = {
+    severity: "high", confidence: "high", category: "runtime_bug",
+    file: "scripts/review.mjs", line: 1, title: "誤検知", body: "問題です。",
+    suggestedVerificationCommand: "git ls-files --cached '*.swift'",
+    verification: { probe: "git_ls_files", arguments: ["--cached", "*.swift"], expected: "unstaged_tracked_file_is_excluded" },
+    executionPath: "レビュー実行時", counterEvidence: "反証なし",
+  };
+
+  const result = parseReviewJson(JSON.stringify({ status: "completed", findings: [finding] }), {
+    verifyProbe: () => ({ verified: false, summary: "未ステージ追跡ファイルも列挙された" }),
+  });
+
+  assert.deepEqual(result.findings, []);
+});
+
+test("runVerificationProbeはgit_ls_filesをシェルなしで実行して未ステージ追跡ファイルを照合する", () => {
+  const calls = [];
+  const outputs = ["Sources/App.swift\n", "Sources/App.swift\n"];
+  const result = runVerificationProbe(
+    { probe: "git_ls_files", arguments: ["--cached", "*.swift"], expected: "unstaged_tracked_file_is_included" },
+    (file, args) => { calls.push([file, args]); return outputs.shift(); },
+  );
+
+  assert.deepEqual(calls, [
+    ["git", ["ls-files", "--cached", "*.swift"]],
+    ["git", ["diff", "--name-only", "--", "*.swift"]],
+  ]);
+  assert.equal(result.verified, true);
+});
+
+test("runVerificationProbeはgit_ls_filesの実結果が除外期待に反すれば失敗する", () => {
+  const outputs = ["Sources/App.swift\n", "Sources/App.swift\n"];
+  const result = runVerificationProbe(
+    { probe: "git_ls_files", arguments: ["--cached", "*.swift"], expected: "unstaged_tracked_file_is_excluded" },
+    () => outputs.shift(),
+  );
+
+  assert.equal(result.verified, false);
+  assert.match(result.summary, /列挙されました/);
+});
+
+test("runVerificationProbeは未許可オプションや未知の期待値を実行しない", () => {
+  let executed = false;
+  const runner = () => { executed = true; return ""; };
+
+  assert.equal(runVerificationProbe({ probe: "git_ls_files", arguments: ["--exec=echo"], expected: "unstaged_tracked_file_is_included" }, runner).verified, false);
+  assert.equal(runVerificationProbe({ probe: "git_ls_files", arguments: ["--cached"], expected: "arbitrary_claim" }, runner).verified, false);
+  assert.equal(runVerificationProbe({ probe: "git_ls_files", arguments: Array(11).fill("*.swift"), expected: "unstaged_tracked_file_is_included" }, runner).verified, false);
+  assert.equal(executed, false);
 });
 
 test("buildDiffArgsは少ない文脈で自動生成物と文書を除外する", () => {
