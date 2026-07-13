@@ -107,6 +107,50 @@ export function runGit(args) {
   return execFileSync("git", args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
 }
 
+function runFile(file, args) {
+  return execFileSync(file, args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+}
+
+export function runVerificationProbe(verification, runner = runFile) {
+  if (!verification || verification.probe !== "git_ls_files") {
+    return { verified: false, summary: "未許可の検証プローブです。" };
+  }
+
+  const args = verification.arguments;
+  const allowedExpected = new Set(["unstaged_tracked_file_is_included", "unstaged_tracked_file_is_excluded"]);
+  const validArguments = Array.isArray(args) && args.length <= 10 && args.every((arg) =>
+    typeof arg === "string" && arg.length > 0 && arg.length <= 256 &&
+    !/[\0\r\n]/.test(arg) && (!arg.startsWith("-") || arg === "--cached"));
+  if (!validArguments || !allowedExpected.has(verification.expected)) {
+    return { verified: false, summary: "検証引数または期待値が許可されていません。" };
+  }
+
+  try {
+    const output = runner("git", ["ls-files", ...args]);
+    const listed = lineSet(output);
+    const patterns = args.filter((arg) => !arg.startsWith("-"));
+    const relevantUnstaged = [...lineSet(runner("git", ["diff", "--name-only", "--", ...patterns]))];
+    if (relevantUnstaged.length === 0) {
+      return { verified: false, summary: "期待値を確認できる未ステージ追跡ファイルがありません。" };
+    }
+    const includedFiles = relevantUnstaged.filter((file) => listed.has(file));
+    const actualIncluded = includedFiles.length === relevantUnstaged.length;
+    const expectedIncluded = verification.expected === "unstaged_tracked_file_is_included";
+    return {
+      verified: actualIncluded === expectedIncluded,
+      summary: actualIncluded
+        ? `未ステージ追跡ファイルが列挙されました: ${includedFiles.slice(0, 5).join(", ")}`
+        : "未ステージ追跡ファイルは列挙されませんでした。",
+    };
+  } catch (error) {
+    return { verified: false, summary: `検証プローブの実行に失敗しました: ${error.message}` };
+  }
+}
+
+function lineSet(text) {
+  return new Set(String(text).split("\n").map((line) => line.trim()).filter(Boolean));
+}
+
 export function buildDiffArgs(range) {
   return [
     "diff",
@@ -183,7 +227,8 @@ export function buildReviewMarkdown(result) {
       return `${index + 1}. **${finding.severity}** ${finding.title}
    - 場所: \`${location}\`
    - 内容: ${finding.body}
-   - 検証コマンド: \`${finding.verificationCommand}\`
+   - 検証コマンド案: \`${finding.suggestedVerificationCommand || "なし"}\`
+   - 機械検証: ${finding.verificationResult?.summary || "確認なし"}
    - 実行経路: ${finding.executionPath}
    - 反証結果: ${finding.counterEvidence}`;
     })
@@ -220,23 +265,28 @@ export function parseReviewJson(text, context = {}) {
   return {
     status: parsed.status || "completed",
     findings: findings
-      .filter((finding) => {
+      .map((finding) => {
         const verified =
           finding &&
           finding.confidence === "high" &&
           allowedSeverities.has(finding.severity) &&
           typeof finding.file === "string" && finding.file.length > 0 &&
           Number.isInteger(finding.line) && finding.line > 0 &&
-          typeof finding.verificationCommand === "string" && finding.verificationCommand.length > 0 &&
+          typeof finding.suggestedVerificationCommand === "string" && finding.suggestedVerificationCommand.length > 0 &&
+          finding.verification && typeof finding.verification === "object" &&
           typeof finding.executionPath === "string" && finding.executionPath.length > 0 &&
           typeof finding.counterEvidence === "string" && finding.counterEvidence.length > 0;
-        if (!verified) return false;
+        if (!verified) return null;
+        const verificationResult = (context.verifyProbe || runVerificationProbe)(finding.verification);
+        if (!verificationResult?.verified) return null;
         if (finding.category === "compilation_error" && context.buildSucceeded) {
-          return (context.deletedSymbolReferences || []).some(({ symbol }) =>
+          const hasReference = (context.deletedSymbolReferences || []).some(({ symbol }) =>
             finding.body?.includes(symbol) || finding.title?.includes(symbol));
+          if (!hasReference) return null;
         }
-        return true;
+        return { ...finding, verificationResult };
       })
+      .filter(Boolean)
       .slice(0, 3),
   };
 }
