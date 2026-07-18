@@ -18,7 +18,9 @@ const input = readJson(inputPath);
 if (shouldSkipReview(input)) {
   const result = {
     status: "skipped",
-    reason: "レビュー対象のコードまたは設定差分がありません。",
+    reason: input.diffUnavailable
+      ? "差分の取得に失敗したためレビューできませんでした(差分が大きすぎる可能性があります)。"
+      : "レビュー対象のコードまたは設定差分がありません。",
     findings: [],
   };
   writeJson(resultPath, result);
