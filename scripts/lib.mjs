@@ -103,8 +103,12 @@ export function findDeletedSymbolReferences(diff, grep = runGit) {
   });
 }
 
+// エンジン同梱PRなどの巨大diffでNodeデフォルトの1MiBを超えると
+// ENOBUFSでクラッシュするため、バッファ上限を引き上げる
+const gitMaxBuffer = 64 * 1024 * 1024;
+
 export function runGit(args) {
-  return execFileSync("git", args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+  return execFileSync("git", args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], maxBuffer: gitMaxBuffer }).trim();
 }
 
 function runFile(file, args) {
