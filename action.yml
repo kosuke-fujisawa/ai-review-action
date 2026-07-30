@@ -15,7 +15,7 @@ inputs:
   max-diff-chars:
     description: Maximum character budget distributed across changed files
     required: false
-    default: "30000"
+    default: "45000"
 
 runs:
   using: composite
@@ -28,6 +28,7 @@ runs:
       shell: bash
       env:
         GITHUB_TOKEN: ${{ inputs.github-token }}
+        GITHUB_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         PR_NUMBER: ${{ github.event.pull_request.number }}
         AI_REVIEW_MAX_DIFF_CHARS: ${{ inputs.max-diff-chars }}
       run: node "$GITHUB_ACTION_PATH/scripts/collect-input.mjs"
@@ -45,4 +46,13 @@ runs:
         GITHUB_TOKEN: ${{ inputs.github-token }}
         PR_NUMBER: ${{ github.event.pull_request.number }}
       run: node "$GITHUB_ACTION_PATH/scripts/publish-comment.mjs"
+
+    - name: Upload AI review artifacts
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: ai-review-${{ github.run_id }}-${{ github.run_attempt }}
+        path: tmp/ai-review/
+        if-no-files-found: ignore
+        retention-days: 14
 
