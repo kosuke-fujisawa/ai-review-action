@@ -1,0 +1,64 @@
+{
+  "version": 1,
+  "model": "gpt-5-mini",
+  "description": "Evidence filterの正解保持と誤検知削減を同じモデル候補で測る小規模変異ベンチマーク",
+  "cases": [
+    {
+      "id": "auth-bypass-introduced",
+      "description": "認証条件の反転により不正tokenを許可する変異",
+      "changedFiles": ["src/auth.mjs"],
+      "expectedFindings": [
+        {
+          "id": "auth-condition-inverted",
+          "title": "token不一致時に削除を許可する"
+        }
+      ],
+      "diff": "diff --git a/src/auth.mjs b/src/auth.mjs\nindex 1111111..2222222 100644\n--- a/src/auth.mjs\n+++ b/src/auth.mjs\n@@ -1,5 +1,5 @@\n export function canDeleteAccount(token, expectedToken) {\n-  return token === expectedToken;\n+  return token !== expectedToken;\n }\n"
+    },
+    {
+      "id": "auth-bypass-fixed",
+      "description": "認証条件の反転を修正する負例",
+      "changedFiles": ["src/auth.mjs"],
+      "expectedFindings": [],
+      "diff": "diff --git a/src/auth.mjs b/src/auth.mjs\nindex 2222222..3333333 100644\n--- a/src/auth.mjs\n+++ b/src/auth.mjs\n@@ -1,5 +1,5 @@\n export function canDeleteAccount(token, expectedToken) {\n-  return token !== expectedToken;\n+  return token === expectedToken;\n }\n"
+    },
+    {
+      "id": "last-index-bug-introduced",
+      "description": "配列末尾取得を範囲外アクセスへ変える変異",
+      "changedFiles": ["src/items.mjs"],
+      "expectedFindings": [
+        {
+          "id": "last-index-out-of-bounds",
+          "title": "末尾要素取得が常にundefinedになる"
+        }
+      ],
+      "diff": "diff --git a/src/items.mjs b/src/items.mjs\nindex 1111111..2222222 100644\n--- a/src/items.mjs\n+++ b/src/items.mjs\n@@ -1,5 +1,5 @@\n export function lastItem(items) {\n-  return items[items.length - 1];\n+  return items[items.length];\n }\n"
+    },
+    {
+      "id": "last-index-bug-fixed",
+      "description": "配列末尾取得の範囲外アクセスを修正する負例",
+      "changedFiles": ["src/items.mjs"],
+      "expectedFindings": [],
+      "diff": "diff --git a/src/items.mjs b/src/items.mjs\nindex 2222222..3333333 100644\n--- a/src/items.mjs\n+++ b/src/items.mjs\n@@ -1,5 +1,5 @@\n export function lastItem(items) {\n-  return items[items.length];\n+  return items[items.length - 1];\n }\n"
+    },
+    {
+      "id": "data-directory-deletion-introduced",
+      "description": "キャッシュ削除処理が永続データディレクトリを削除する変異",
+      "changedFiles": ["src/cache.mjs"],
+      "expectedFindings": [
+        {
+          "id": "persistent-data-deleted",
+          "title": "clearCacheがdataDirを再帰削除する"
+        }
+      ],
+      "diff": "diff --git a/src/cache.mjs b/src/cache.mjs\nindex 1111111..2222222 100644\n--- a/src/cache.mjs\n+++ b/src/cache.mjs\n@@ -1,6 +1,6 @@\n import { rmSync } from \"node:fs\";\n \n export function clearCache({ cacheDir, dataDir }) {\n-  rmSync(cacheDir, { recursive: true, force: true });\n+  rmSync(dataDir, { recursive: true, force: true });\n }\n"
+    },
+    {
+      "id": "data-directory-deletion-fixed",
+      "description": "永続データ削除をキャッシュ削除へ修正する負例",
+      "changedFiles": ["src/cache.mjs"],
+      "expectedFindings": [],
+      "diff": "diff --git a/src/cache.mjs b/src/cache.mjs\nindex 2222222..3333333 100644\n--- a/src/cache.mjs\n+++ b/src/cache.mjs\n@@ -1,6 +1,6 @@\n import { rmSync } from \"node:fs\";\n \n export function clearCache({ cacheDir, dataDir }) {\n-  rmSync(dataDir, { recursive: true, force: true });\n+  rmSync(cacheDir, { recursive: true, force: true });\n }\n"
+    }
+  ]
+}

@@ -1,0 +1,51 @@
+name: PR Agent
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, review_requested]
+  issue_comment:
+    types: [created, edited]
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: pr-agent-${{ github.event.pull_request.number || github.event.issue.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    if: >-
+      ${{
+        github.event.sender.type != 'Bot' &&
+        (
+          (
+            github.event_name == 'pull_request' &&
+            !github.event.pull_request.draft &&
+            github.event.pull_request.head.repo.full_name == github.repository &&
+            !contains(github.event.pull_request.labels.*.name, 'skip-ai-review')
+          ) ||
+          (
+            github.event_name == 'issue_comment' &&
+            github.event.issue.pull_request &&
+            contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
+          )
+        )
+      }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Run PR-Agent v0.35.0
+        uses: the-pr-agent/pr-agent@0bd56c0508504c718cc03d504cd4ceb6725ba3c7
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OPENAI_KEY: ${{ secrets.OPENAI_API_KEY }}
+          config.model: ${{ vars.AI_REVIEW_MODEL || 'gpt-5-mini' }}
+          config.fallback_models: '[]'
+          config.response_language: ja-JP
+          github_action_config.auto_review: 'true'
+          github_action_config.auto_describe: 'true'
+          github_action_config.auto_improve: 'true'
+          github_action_config.pr_actions: '["opened","synchronize","reopened","ready_for_review","review_requested"]'

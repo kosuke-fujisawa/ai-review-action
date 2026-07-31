@@ -1,0 +1,165 @@
+{
+  "runs": [
+    {
+      "engine": "ai-review-action",
+      "caseId": "pr4-initial-regressions",
+      "status": "failed",
+      "reason": "OpenAI Responses API call exceeded the built-in 90 second timeout on both standard attempts",
+      "durationMs": 90084,
+      "attempts": 2,
+      "findings": []
+    },
+    {
+      "engine": "ai-review-action",
+      "caseId": "completed-build-status-fix",
+      "status": "completed",
+      "durationMs": 26106,
+      "usage": {
+        "inputTokens": 2013,
+        "outputTokens": 2010
+      },
+      "findings": [
+        {
+          "title": "computeBuildSucceededがstatus未設定の成功チェックを誤って無視する可能性",
+          "file": "scripts/lib.mjs",
+          "classification": "false_positive",
+          "classificationReason": "実運用の入力元であるGitHub Checks APIのcheck runはstatusを持ち、status欠落という提示経路は成立しない",
+          "matchedExpectedIds": []
+        }
+      ]
+    },
+    {
+      "engine": "ai-review-action",
+      "caseId": "coderabbit-findings-fix",
+      "status": "completed",
+      "durationMs": 76939,
+      "usage": {
+        "inputTokens": 5580,
+        "outputTokens": 6473
+      },
+      "findings": [
+        {
+          "title": "changedFilesが空配列のときファイル照合をスキップして差分に含まれない指摘が採用される",
+          "file": "scripts/lib.mjs",
+          "classification": "false_positive",
+          "classificationReason": "通常フローではレビュー対象diffがあればcollect-inputがchangedFilesを生成し、空diffはAPI呼び出し前にskipされるため提示経路は成立しない",
+          "matchedExpectedIds": []
+        }
+      ]
+    },
+    {
+      "engine": "ai-review-action",
+      "caseId": "large-diff-buffer-fix",
+      "status": "completed",
+      "durationMs": 52932,
+      "usage": {
+        "inputTokens": 4130,
+        "outputTokens": 4416
+      },
+      "findings": []
+    },
+    {
+      "engine": "pr-agent-v0.35.0",
+      "caseId": "pr4-initial-regressions",
+      "status": "completed",
+      "durationMs": 47928,
+      "findings": [
+        {
+          "title": "Evidence gate too strict",
+          "file": "scripts/lib.mjs",
+          "classification": "false_positive",
+          "classificationReason": "suggestedVerificationCommandを証拠要件として残すのは当該変更の方針内であり、既知不具合3件のいずれにも該当しない",
+          "matchedExpectedIds": []
+        },
+        {
+          "title": "Response schema may be too narrow",
+          "file": "scripts/lib.mjs",
+          "classification": "false_positive",
+          "classificationReason": "APIを呼ぶレビュー経路の出力statusはcompletedに限定する設計で、skippedはAPI呼び出し前にAction自身が生成する",
+          "matchedExpectedIds": []
+        }
+      ]
+    },
+    {
+      "engine": "pr-agent-v0.35.0",
+      "caseId": "completed-build-status-fix",
+      "status": "completed",
+      "durationMs": 13337,
+      "findings": []
+    },
+    {
+      "engine": "pr-agent-v0.35.0",
+      "caseId": "coderabbit-findings-fix",
+      "status": "completed",
+      "durationMs": 34723,
+      "findings": [
+        {
+          "title": "Path matching",
+          "file": "scripts/lib.mjs",
+          "classification": "false_positive",
+          "classificationReason": "changedFilesとモデルへ渡すdiffはいずれも同じgit diff由来のリポジトリ相対パスで、a/やb/をfinding.fileへ付ける実行経路は示されていない",
+          "matchedExpectedIds": []
+        },
+        {
+          "title": "Flaky test assumption",
+          "file": "scripts/lib.test.mjs",
+          "classification": "false_positive",
+          "classificationReason": "MIN_FILE_BUDGETは同じ実装内で200に固定されており、仮に将来値を変えた場合という指摘は現在の不具合ではない",
+          "matchedExpectedIds": []
+        }
+      ]
+    },
+    {
+      "engine": "pr-agent-v0.35.0",
+      "caseId": "large-diff-buffer-fix",
+      "status": "completed",
+      "durationMs": 27337,
+      "findings": [
+        {
+          "title": "Silent error swallowing",
+          "file": "scripts/collect-input.mjs",
+          "classification": "false_positive",
+          "classificationReason": "diff取得不能時にActionを落とさずskipするのは当該修正の明示的な要件で、機能上の誤動作は示されていない",
+          "matchedExpectedIds": []
+        },
+        {
+          "title": "Fragile integration test dependency",
+          "file": "scripts/lib.test.mjs",
+          "classification": "false_positive",
+          "classificationReason": "GitHub Actionと対象実装自体がgitを必須とするため、gitがない環境をこのテストだけが新たに要求したわけではない",
+          "matchedExpectedIds": []
+        }
+      ]
+    }
+  ],
+  "diagnosticRuns": [
+    {
+      "engine": "ai-review-action",
+      "caseId": "pr4-initial-regressions",
+      "configurationDifference": "A temporary copy changed only AbortSignal.timeout from 90000ms to 300000ms",
+      "status": "completed",
+      "durationMs": 89112,
+      "usage": {
+        "inputTokens": 9740,
+        "outputTokens": 9138
+      },
+      "findings": [
+        {
+          "title": "git_ls_files 検証で引数がフラグのみだと検証が常に非決定になる",
+          "classification": "false_positive",
+          "matchedExpectedIds": []
+        },
+        {
+          "title": "runVerificationProbe が先頭ハイフン付き引数を拒否するため正当なパターン指定が弾かれる可能性",
+          "classification": "false_positive",
+          "matchedExpectedIds": []
+        }
+      ],
+      "missedExpectedIds": [
+        "file-scope-not-validated",
+        "minimum-budget-overflow",
+        "unsupported-strict-schema-keywords"
+      ]
+    }
+  ]
+}

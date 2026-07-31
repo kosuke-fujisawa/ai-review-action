@@ -1,14 +1,16 @@
 {
-  "name": "ai-review-action",
+  "name": "ai-review-action-retired",
   "version": "1.0.0",
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test scripts/*.test.mjs",
-    "check": "node --check scripts/collect-input.mjs && node --check scripts/review.mjs && node --check scripts/publish-comment.mjs"
+    "test": "node --test benchmark/*.test.mjs",
+    "check": "node --check benchmark/lib.mjs && node --check benchmark/report.mjs && node --check benchmark/filter-report.mjs",
+    "benchmark:report": "node benchmark/report.mjs",
+    "benchmark:filter-report": "node benchmark/filter-report.mjs",
+    "benchmark:filter-pilot-report": "node benchmark/filter-report.mjs benchmark/filter-pilot-manifest.json benchmark/filter-pilot-results.json"
   },
   "engines": {
     "node": ">=20"
   }
 }
-
