@@ -367,6 +367,7 @@ function referencesChangedFile(finding, changedFiles) {
 export function computeBuildSucceeded(deterministicChecks, { ownCheckNamePattern = /ai[\s_-]?review/i } = {}) {
   return (deterministicChecks || []).some((check) =>
     /build/i.test(check.name || "") &&
+    check.status === "completed" &&
     check.conclusion === "success" &&
     !ownCheckNamePattern.test(check.name || ""));
 }

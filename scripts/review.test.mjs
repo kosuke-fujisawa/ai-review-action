@@ -31,6 +31,11 @@ test("computeBuildSucceededは進行中のcheckをbuild成功として扱わな�
   assert.equal(computeBuildSucceeded(checks), false);
 });
 
+test("computeBuildSucceededはstatusがcompleted以外の場合conclusionがsuccessでも成功として扱わない", () => {
+  const checks = [{ name: "Build", status: "in_progress", conclusion: "success" }];
+  assert.equal(computeBuildSucceeded(checks), false);
+});
+
 test("computeBuildSucceededはAIレビュー自身のcheckを除外する", () => {
   const checks = [{ name: "AI Review Build Summary", status: "completed", conclusion: "success" }];
   assert.equal(computeBuildSucceeded(checks), false);
