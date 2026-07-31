@@ -1,0 +1,79 @@
+{
+  "method": "paired-before-after",
+  "model": "gpt-5-mini",
+  "runs": [
+    {
+      "caseId": "auth-bypass-introduced",
+      "status": "completed",
+      "durationMs": 11494,
+      "candidates": [
+        {
+          "title": "認可ロジックが逆になっている（トークン不一致で許可される）",
+          "kept": false,
+          "rejectionReason": "insufficient_evidence",
+          "classification": "true_positive",
+          "classificationReason": "token !== expectedTokenは不一致tokenを許可する変異そのものを指摘している",
+          "matchedExpectedIds": ["auth-condition-inverted"]
+        }
+      ]
+    },
+    {
+      "caseId": "auth-bypass-fixed",
+      "status": "completed",
+      "durationMs": 6281,
+      "candidates": []
+    },
+    {
+      "caseId": "last-index-bug-introduced",
+      "status": "completed",
+      "durationMs": 12277,
+      "attempts": 2,
+      "candidates": [
+        {
+          "title": "lastItem が常に undefined を返す（境界インデックス誤り）",
+          "kept": false,
+          "rejectionReason": "insufficient_evidence",
+          "classification": "true_positive",
+          "classificationReason": "items[items.length]が配列範囲外で常にundefinedになる変異を正確に指摘している",
+          "matchedExpectedIds": ["last-index-out-of-bounds"]
+        }
+      ]
+    },
+    {
+      "caseId": "last-index-bug-fixed",
+      "status": "completed",
+      "durationMs": 6766,
+      "candidates": []
+    },
+    {
+      "caseId": "data-directory-deletion-introduced",
+      "status": "completed",
+      "durationMs": 25316,
+      "candidates": [
+        {
+          "title": "clearCache が誤って dataDir を削除するようになっている",
+          "kept": false,
+          "rejectionReason": "insufficient_evidence",
+          "classification": "true_positive",
+          "classificationReason": "cacheDirの代わりにdataDirを再帰削除する変異と観測可能なデータ損失を正確に指摘している",
+          "matchedExpectedIds": ["persistent-data-deleted"]
+        }
+      ]
+    },
+    {
+      "caseId": "data-directory-deletion-fixed",
+      "status": "completed",
+      "durationMs": 19039,
+      "candidates": [
+        {
+          "title": "clearCacheがcacheDirを参照するようになり、cacheDir未指定時に例外が発生する可能性",
+          "kept": true,
+          "rejectionReason": null,
+          "classification": "false_positive",
+          "classificationReason": "差分にも呼び出し元にもcacheDir省略の根拠がなく、修正前のdataDir削除を正しい契約と仮定している",
+          "matchedExpectedIds": []
+        }
+      ]
+    }
+  ]
+}

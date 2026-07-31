@@ -1,7 +1,7 @@
 # 0001. AIレビュー基盤を専用の共有Actionへ集約する
 
 - 日付: 2026-07-12
-- 状態: 採用
+- 状態: 廃止（後継: [0002. 独自AIレビューActionを廃止しPR-Agentを直接利用する](0002-adopt-pr-agent-and-retire-custom-action.md)）
 
 ## 背景
 

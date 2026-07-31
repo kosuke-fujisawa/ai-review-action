@@ -1,4 +1,4 @@
-name: CI
+name: Retired action records CI
 
 on:
   push:
@@ -8,7 +8,7 @@ permissions:
   contents: read
 
 jobs:
-  test:
+  verify-records:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -17,4 +17,7 @@ jobs:
           node-version: 20
       - run: npm test
       - run: npm run check
-
+      - name: Ensure the retired custom Action is absent
+        run: test ! -e action.yml && test ! -d scripts
+      - name: Validate PR-Agent example configuration
+        run: python3 -c "import pathlib,tomllib; tomllib.loads(pathlib.Path('examples/pr-agent.toml').read_text())"

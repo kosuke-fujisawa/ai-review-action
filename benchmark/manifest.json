@@ -1,0 +1,58 @@
+{
+  "version": 1,
+  "model": "gpt-5-mini",
+  "aiReviewMaxDiffChars": 45000,
+  "engines": [
+    "ai-review-action",
+    "pr-agent-v0.35.0"
+  ],
+  "cases": [
+    {
+      "id": "pr4-initial-regressions",
+      "description": "PR #4の初回コミットで導入され、CodeRabbitの指摘後に修正された既知不具合",
+      "base": "45f66355683d3be8218003f83c4b96fb441c4da1",
+      "head": "423ced4cfb115dd4e3a1cc20867cb418ad279872",
+      "expectedFindings": [
+        {
+          "id": "file-scope-not-validated",
+          "title": "非差分ファイルへの指摘を採用できる",
+          "file": "scripts/lib.mjs",
+          "source": "https://github.com/kosuke-fujisawa/ai-review-action/pull/4#discussion_r3679609761"
+        },
+        {
+          "id": "minimum-budget-overflow",
+          "title": "多数ファイル時に配分合計がmaxCharsを超える",
+          "file": "scripts/lib.mjs",
+          "source": "https://github.com/kosuke-fujisawa/ai-review-action/pull/4#discussion_r3679609769"
+        },
+        {
+          "id": "unsupported-strict-schema-keywords",
+          "title": "OpenAI strict schemaへ未対応制約を送る",
+          "file": "scripts/lib.mjs",
+          "source": "https://github.com/kosuke-fujisawa/ai-review-action/pull/4#discussion_r3679609771"
+        }
+      ]
+    },
+    {
+      "id": "completed-build-status-fix",
+      "description": "完了していないcheckをBuild成功と扱わないための小さな修正。既知の新規不具合なし",
+      "base": "1f418a90819c2e6ff3c0cda3ebbe15f55841bcd8",
+      "head": "3029eddc4cd491a54bd0e71cbfb43fcb815b1dab",
+      "expectedFindings": []
+    },
+    {
+      "id": "coderabbit-findings-fix",
+      "description": "PR #4で指摘された3件をテスト付きで修正したコミット。既知の新規不具合なし",
+      "base": "423ced4cfb115dd4e3a1cc20867cb418ad279872",
+      "head": "1f418a90819c2e6ff3c0cda3ebbe15f55841bcd8",
+      "expectedFindings": []
+    },
+    {
+      "id": "large-diff-buffer-fix",
+      "description": "1MiB超diffのENOBUFSをテスト付きで修正したコミット。既知の新規不具合なし",
+      "base": "27855e871522f64e3ef11c59db9242e2c6d3cab2",
+      "head": "b78399f3e113421fde706f7be8cde09d206a0c40",
+      "expectedFindings": []
+    }
+  ]
+}

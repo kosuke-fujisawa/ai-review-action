@@ -1,0 +1,15 @@
+[config]
+model = "gpt-5-mini"
+fallback_models = []
+response_language = "ja-JP"
+
+[pr_reviewer]
+num_max_findings = 3
+require_security_review = true
+extra_instructions = ""
+
+[pr_description]
+publish_labels = false
+
+[pr_code_suggestions]
+focus_only_on_problems = true

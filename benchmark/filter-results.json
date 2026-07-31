@@ -1,0 +1,69 @@
+{
+  "method": "paired-before-after",
+  "description": "同一のgpt-5-mini応答候補をfilter適用前後で比較する。kept=falseは現行Actionの後処理で棄却された候補。",
+  "runs": [
+    {
+      "caseId": "pr4-initial-regressions",
+      "status": "completed",
+      "sourceRun": "300秒タイムアウトの診断実行",
+      "candidates": [
+        {
+          "title": "git_ls_files 検証で引数がフラグのみだと検証が常に非決定になる",
+          "kept": true,
+          "rejectionReason": null,
+          "classification": "false_positive",
+          "matchedExpectedIds": []
+        },
+        {
+          "title": "runVerificationProbe が先頭ハイフン付き引数を拒否するため正当なパターン指定が弾かれる可能性",
+          "kept": true,
+          "rejectionReason": null,
+          "classification": "false_positive",
+          "matchedExpectedIds": []
+        }
+      ]
+    },
+    {
+      "caseId": "completed-build-status-fix",
+      "status": "completed",
+      "sourceRun": "標準実行",
+      "candidates": [
+        {
+          "title": "computeBuildSucceededがstatus未設定の成功チェックを誤って無視する可能性",
+          "kept": true,
+          "rejectionReason": null,
+          "classification": "false_positive",
+          "matchedExpectedIds": []
+        }
+      ]
+    },
+    {
+      "caseId": "coderabbit-findings-fix",
+      "status": "completed",
+      "sourceRun": "標準実行",
+      "candidates": [
+        {
+          "title": "changedFilesが空配列のときファイル照合をスキップして差分に含まれない指摘が採用される",
+          "kept": true,
+          "rejectionReason": null,
+          "classification": "false_positive",
+          "matchedExpectedIds": []
+        }
+      ]
+    },
+    {
+      "caseId": "large-diff-buffer-fix",
+      "status": "completed",
+      "sourceRun": "標準実行",
+      "candidates": [
+        {
+          "title": "runGit の maxBuffer が固定64MiBのままでは更に大きなdiffで失敗する可能性がある",
+          "kept": false,
+          "rejectionReason": "insufficient_evidence",
+          "classification": "false_positive",
+          "matchedExpectedIds": []
+        }
+      ]
+    }
+  ]
+}
