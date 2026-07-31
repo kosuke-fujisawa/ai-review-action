@@ -2,11 +2,14 @@ import { writeFileSync } from "node:fs";
 import {
   buildReviewMarkdown,
   commentPath,
+  computeBuildSucceeded,
+  diagnosticsPath,
   extractResponseText,
   inputPath,
   parseReviewJson,
   readJson,
   resultPath,
+  reviewResponseSchema,
   shouldSkipReview,
   writeJson,
 } from "./lib.mjs";
@@ -14,6 +17,21 @@ import {
 const apiKey = process.env.OPENAI_API_KEY;
 const model = process.env.AI_REVIEW_MODEL || "gpt-5-mini";
 const input = readJson(inputPath);
+
+function writeEmptyDiagnostics(reason) {
+  writeJson(diagnosticsPath, {
+    model,
+    requestedAt: new Date().toISOString(),
+    skippedReason: reason,
+    openai: null,
+    diff: {
+      truncated: Boolean(input.diffTruncated),
+      fileCount: (input.changedFiles || []).length,
+      files: input.diffStats || [],
+    },
+    review: { candidateCount: 0, adoptedCount: 0, candidates: [] },
+  });
+}
 
 if (shouldSkipReview(input)) {
   const result = {
@@ -25,6 +43,7 @@ if (shouldSkipReview(input)) {
   };
   writeJson(resultPath, result);
   writeFileSync(commentPath, buildReviewMarkdown(result));
+  writeEmptyDiagnostics(result.reason);
   process.exit(0);
 }
 
@@ -36,6 +55,7 @@ if (!apiKey) {
   };
   writeJson(resultPath, result);
   writeFileSync(commentPath, buildReviewMarkdown(result));
+  writeEmptyDiagnostics(result.reason);
   process.exit(0);
 }
 
@@ -48,10 +68,10 @@ PR差分に直接関係する、再現性のある指摘だけを返してくだ
 設定、権限、外部API、ライブラリの仕様を差分だけで確認できない場合は推測せず、指摘を省略してください。
 CLI、Git、ライブラリのオプションの意味を名称から推測することは禁止します。公式仕様または入力済みの実行結果で確認できない場合は指摘しないでください。
 suggestedVerificationCommandは未実行の提案であり、その結果を観測した、確認した、再現したとは書かないでください。
-未実行の任意コマンドを根拠にせず、Actionが実行できる構造化verificationで問題が再現する指摘だけを返してください。
-構造化verificationは指摘の因果を直接検証するものだけを指定し、suggestedVerificationCommandと対応させてください。
-git_ls_filesプローブは、実行経路自体がgit ls-filesの挙動に依存する指摘だけに使用できます。ランタイム、フレームワーク、ライブラリの挙動を裏付けるために使用してはいけません。
+verificationは任意です。差分だけから確信度high・具体的な実行経路・観測可能な影響・反証結果を示せる指摘は、verification:nullのまま返して構いません。verificationを付与する場合は、Actionが実行できる構造化プローブ(現在はgit_ls_filesのみ)に限り、未実行の任意コマンドを実行済みであるかのように書かないでください。
+構造化verificationを付与する場合は、指摘の因果を直接検証するものだけを指定し、suggestedVerificationCommandと対応させてください(例: probeがgit_ls_filesならsuggestedVerificationCommandも実際にgit ls-filesで始まるコマンドにする)。
 git ls-files --cachedはステージ済み変更だけでなく、インデックスに登録された全追跡ファイルを列挙します。
+git_ls_filesプローブは、実行経路自体がgitが追跡・列挙するファイル集合の挙動に依存する指摘だけに根拠として使ってください。ランタイム、フレームワーク、ライブラリの挙動(実行時バグ、セキュリティ、データ損失、テスト不足など)を裏付けるための、無関係な根拠としてgit_ls_filesを付けないでください。
 意図的な入力上限、タイムアウト、レビュー範囲の縮小は運用上の制約であり、それ自体を不具合として指摘しないでください。
 「問題が起きる可能性がある」というリスクだけでは指摘せず、対応する具体的な入力で不正な結果が確実に発生する場合だけ指摘してください。
 「参照が残っている場合」のような条件付きコンパイルエラー指摘は禁止します。実在する参照ファイルと行番号を提示できない場合は返さないでください。
@@ -71,7 +91,9 @@ ${JSON.stringify(input.pullRequest, null, 2)}
 
 ## 注意
 diffTruncated=${input.diffTruncated}
+verificationは任意です。差分から直接確認できる指摘はverification:nullで返してください。
 指摘は最大3件です。タイトルと本文は簡潔にしてください。
+省略されたファイル(上位10件): ${JSON.stringify((input.diffStats || []).filter((file) => file.omittedChars > 0).slice(0, 10))}
 
 ## Deterministic checks
 ${JSON.stringify(input.deterministicChecks || [], null, 2)}
@@ -83,53 +105,6 @@ ${JSON.stringify(input.deletedSymbolReferences || [], null, 2)}
 \`\`\`diff
 ${input.diff}
 \`\`\``;
-
-const schema = {
-  type: "object",
-  additionalProperties: false,
-  required: ["status", "findings"],
-  properties: {
-    status: { type: "string", enum: ["completed"] },
-    findings: {
-      type: "array",
-      maxItems: 3,
-      items: {
-        type: "object",
-        additionalProperties: false,
-        required: ["severity", "confidence", "category", "file", "line", "title", "body", "suggestedVerificationCommand", "verification", "executionPath", "counterEvidence"],
-        properties: {
-          severity: { type: "string", enum: ["critical", "high", "medium"] },
-          confidence: { type: "string", enum: ["high", "medium", "low"] },
-          category: { type: "string", enum: ["compilation_error", "runtime_bug", "security", "data_loss", "test_gap"] },
-          file: { type: "string" },
-          line: { type: "integer", minimum: 1 },
-          title: { type: "string" },
-          body: { type: "string" },
-          suggestedVerificationCommand: { type: "string" },
-          verification: {
-            type: "object",
-            additionalProperties: false,
-            required: ["probe", "arguments", "expected"],
-            properties: {
-              probe: { type: "string", enum: ["git_ls_files"] },
-              arguments: {
-                type: "array",
-                items: { type: "string" },
-                maxItems: 10,
-              },
-              expected: {
-                type: "string",
-                enum: ["unstaged_tracked_file_is_included", "unstaged_tracked_file_is_excluded"],
-              },
-            },
-          },
-          executionPath: { type: "string" },
-          counterEvidence: { type: "string" },
-        },
-      },
-    },
-  },
-};
 
 const response = await fetch("https://api.openai.com/v1/responses", {
   method: "POST",
@@ -148,7 +123,7 @@ const response = await fetch("https://api.openai.com/v1/responses", {
       format: {
         type: "json_schema",
         name: "review_result",
-        schema,
+        schema: reviewResponseSchema,
         strict: true,
       },
     },
@@ -160,11 +135,24 @@ if (!response.ok) {
   throw new Error(`OpenAI API error: ${response.status} ${JSON.stringify(data)}`);
 }
 
-const buildSucceeded = (input.deterministicChecks || []).some((check) =>
-  /build/i.test(check.name || "") && check.conclusion === "success");
-const result = parseReviewJson(extractResponseText(data), {
+const buildSucceeded = computeBuildSucceeded(input.deterministicChecks);
+const parsed = parseReviewJson(extractResponseText(data), {
   buildSucceeded,
   deletedSymbolReferences: input.deletedSymbolReferences || [],
+  changedFiles: input.changedFiles || [],
 });
+const { diagnostics, ...result } = parsed;
+
 writeJson(resultPath, result);
 writeFileSync(commentPath, buildReviewMarkdown(result));
+writeJson(diagnosticsPath, {
+  model,
+  requestedAt: new Date().toISOString(),
+  openai: { status: response.status, id: data.id || null, usage: data.usage || null },
+  diff: {
+    truncated: Boolean(input.diffTruncated),
+    fileCount: (input.changedFiles || []).length,
+    files: input.diffStats || [],
+  },
+  review: diagnostics,
+});

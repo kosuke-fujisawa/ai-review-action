@@ -53,6 +53,7 @@ writeJson(inputPath, {
   diffTruncated: budgetedDiff.truncated,
   diffUnavailable,
   changedFiles: budgetedDiff.files,
+  diffStats: budgetedDiff.fileStats,
   deletedSymbolReferences,
   deterministicChecks,
 });

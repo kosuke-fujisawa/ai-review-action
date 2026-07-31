@@ -6,6 +6,11 @@ export const outputDir = "tmp/ai-review";
 export const inputPath = `${outputDir}/input.json`;
 export const resultPath = `${outputDir}/result.json`;
 export const commentPath = `${outputDir}/comment.md`;
+export const diagnosticsPath = `${outputDir}/diagnostics.json`;
+
+// エンジン同梱PRなどの巨大diffでNodeデフォルトの1MiBを超えると
+// ENOBUFSでクラッシュするため、バッファ上限を引き上げる
+const MAX_BUFFER_BYTES = 64 * 1024 * 1024;
 
 const excludedDiffPathspecs = [
   ":(exclude,glob)**/*.md",
@@ -28,6 +33,7 @@ const excludedDiffPathspecs = [
   ":(exclude,glob)**/*.svg",
   ":(exclude,glob)**/*.pdf",
   ":(exclude,glob)**/*.zip",
+  ":(exclude,glob)**/*.uid",
   ":(exclude,glob).github/workflows/ai-review.yml",
   ":(exclude,glob)scripts/ai-review/**",
 ];
@@ -60,21 +66,61 @@ export function truncateText(text, maxChars) {
   };
 }
 
+const LOW_VALUE_DIFF_EXTENSIONS = new Set([
+  ".json", ".yaml", ".yml", ".xml", ".plist", ".strings", ".xcstrings", ".resx", ".csv",
+]);
+const MIN_FILE_BUDGET = 200;
+
+function extensionOf(fileName) {
+  const dot = fileName.lastIndexOf(".");
+  return dot >= 0 ? fileName.slice(dot).toLowerCase() : "";
+}
+
+function tierOf(fileName) {
+  return LOW_VALUE_DIFF_EXTENSIONS.has(extensionOf(fileName)) ? "low_value" : "code";
+}
+
+function weightOf(fileName) {
+  return tierOf(fileName) === "low_value" ? 1 : 3;
+}
+
 export function budgetDiffByFile(diff, maxChars) {
   const sections = diff.split(/(?=^diff --git )/m).filter((section) => section.trim());
   if (sections.length === 0 || diff.length <= maxChars) {
-    return { text: diff, truncated: false, files: sections.map(diffFileName) };
+    return {
+      text: diff,
+      truncated: false,
+      files: sections.map(diffFileName),
+      fileStats: sections.map((section) => {
+        const file = diffFileName(section);
+        return { file, originalChars: section.length, keptChars: section.length, omittedChars: 0, tier: tierOf(file) };
+      }),
+    };
   }
 
-  const perFileBudget = Math.max(120, Math.floor(maxChars / sections.length));
-  const rendered = sections.map((section) => {
-    if (section.length <= perFileBudget) return section;
+  const files = sections.map(diffFileName);
+  const weights = files.map(weightOf);
+  const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
+  const fileStats = [];
+  // 全ファイルに下限を配れない場合は下限を諦めて比例配分のみに従う(合計がmaxChars超過するのを防ぐ)
+  const minBudget = MIN_FILE_BUDGET * sections.length <= maxChars ? MIN_FILE_BUDGET : 0;
+
+  const rendered = sections.map((section, index) => {
+    const file = files[index];
+    const perFileBudget = Math.max(minBudget, Math.floor((maxChars * weights[index]) / totalWeight));
+    if (section.length <= perFileBudget) {
+      fileStats.push({ file, originalChars: section.length, keptChars: section.length, omittedChars: 0, tier: tierOf(file) });
+      return section;
+    }
     const headerEnd = section.indexOf("\n");
     const header = headerEnd >= 0 ? section.slice(0, headerEnd + 1) : section;
     const bodyBudget = Math.max(0, perFileBudget - header.length - 40);
-    return `${header}${section.slice(header.length, header.length + bodyBudget)}\n[truncated within file]\n`;
+    const kept = `${header}${section.slice(header.length, header.length + bodyBudget)}`;
+    const omittedChars = section.length - kept.length;
+    fileStats.push({ file, originalChars: section.length, keptChars: kept.length, omittedChars, tier: tierOf(file) });
+    return `${kept}\n[truncated within file: ${omittedChars} chars omitted]\n`;
   });
-  return { text: rendered.join("\n"), truncated: true, files: sections.map(diffFileName) };
+  return { text: rendered.join("\n"), truncated: true, files, fileStats };
 }
 
 function diffFileName(section) {
@@ -103,21 +149,25 @@ export function findDeletedSymbolReferences(diff, grep = runGit) {
   });
 }
 
-// エンジン同梱PRなどの巨大diffでNodeデフォルトの1MiBを超えると
-// ENOBUFSでクラッシュするため、バッファ上限を引き上げる
-const gitMaxBuffer = 64 * 1024 * 1024;
-
 export function runGit(args) {
-  return execFileSync("git", args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], maxBuffer: gitMaxBuffer }).trim();
+  return execFileSync("git", args, {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    maxBuffer: MAX_BUFFER_BYTES,
+  }).trim();
 }
 
 function runFile(file, args) {
-  return execFileSync(file, args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+  return execFileSync(file, args, {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    maxBuffer: MAX_BUFFER_BYTES,
+  }).trim();
 }
 
 export function runVerificationProbe(verification, runner = runFile) {
   if (!verification || verification.probe !== "git_ls_files") {
-    return { verified: false, summary: "未許可の検証プローブです。" };
+    return { verified: false, outcome: "inconclusive", summary: "未許可の検証プローブです。" };
   }
 
   const args = verification.arguments;
@@ -126,7 +176,7 @@ export function runVerificationProbe(verification, runner = runFile) {
     typeof arg === "string" && arg.length > 0 && arg.length <= 256 &&
     !/[\0\r\n]/.test(arg) && (!arg.startsWith("-") || arg === "--cached"));
   if (!validArguments || !allowedExpected.has(verification.expected)) {
-    return { verified: false, summary: "検証引数または期待値が許可されていません。" };
+    return { verified: false, outcome: "inconclusive", summary: "検証引数または期待値が許可されていません。" };
   }
 
   try {
@@ -135,19 +185,21 @@ export function runVerificationProbe(verification, runner = runFile) {
     const patterns = args.filter((arg) => !arg.startsWith("-"));
     const relevantUnstaged = [...lineSet(runner("git", ["diff", "--name-only", "--", ...patterns]))];
     if (relevantUnstaged.length === 0) {
-      return { verified: false, summary: "期待値を確認できる未ステージ追跡ファイルがありません。" };
+      return { verified: false, outcome: "inconclusive", summary: "期待値を確認できる未ステージ追跡ファイルがありません。" };
     }
     const includedFiles = relevantUnstaged.filter((file) => listed.has(file));
     const actualIncluded = includedFiles.length === relevantUnstaged.length;
     const expectedIncluded = verification.expected === "unstaged_tracked_file_is_included";
+    const verified = actualIncluded === expectedIncluded;
     return {
-      verified: actualIncluded === expectedIncluded,
+      verified,
+      outcome: verified ? "confirmed" : "contradicted",
       summary: actualIncluded
         ? `未ステージ追跡ファイルが列挙されました: ${includedFiles.slice(0, 5).join(", ")}`
         : "未ステージ追跡ファイルは列挙されませんでした。",
     };
   } catch (error) {
-    return { verified: false, summary: `検証プローブの実行に失敗しました: ${error.message}` };
+    return { verified: false, outcome: "inconclusive", summary: `検証プローブの実行に失敗しました: ${error.message}` };
   }
 }
 
@@ -200,6 +252,22 @@ export function listTrackedFiles(patterns) {
   }
 }
 
+function renderVerificationLine(finding) {
+  const summary = finding.verificationResult?.summary;
+  switch (finding.verificationRelevance) {
+    case "supports":
+      return `確認済み: ${summary}`;
+    case "contradicts":
+      return `矛盾あり(通常は採用前に棄却されます): ${summary}`;
+    case "inconclusive":
+      return `実行不能(構造的理由のため未確認): ${summary}`;
+    case "irrelevant":
+      return `本指摘とは無関係のため未使用${summary ? `(参考: ${summary})` : ""}`;
+    default:
+      return "機械検証なし";
+  }
+}
+
 export function buildReviewMarkdown(result) {
   const marker = "<!-- ai-review-bot -->";
   const findings = Array.isArray(result.findings) ? result.findings : [];
@@ -232,7 +300,7 @@ export function buildReviewMarkdown(result) {
    - 場所: \`${location}\`
    - 内容: ${finding.body}
    - 検証コマンド案: \`${finding.suggestedVerificationCommand || "なし"}\`
-   - 機械検証: ${finding.verificationResult?.summary || "確認なし"}
+   - 機械検証: ${renderVerificationLine(finding)}
    - 実行経路: ${finding.executionPath}
    - 反証結果: ${finding.counterEvidence}`;
     })
@@ -261,54 +329,175 @@ export function extractResponseText(data) {
   return chunks.join("\n");
 }
 
-export function verificationSupportsFinding(finding) {
-  if (!finding?.verification || typeof finding.verification !== "object") {
-    return false;
-  }
+const allowedSeverities = new Set(["critical", "high", "medium"]);
 
-  if (finding.verification.probe === "git_ls_files") {
-    const command = finding.suggestedVerificationCommand?.trim() || "";
-    const claim = [finding.title, finding.body, finding.executionPath]
-      .filter((value) => typeof value === "string")
-      .join("\n");
+export function meetsEvidenceGate(finding) {
+  return Boolean(
+    finding &&
+    finding.confidence === "high" &&
+    allowedSeverities.has(finding.severity) &&
+    typeof finding.file === "string" && finding.file.trim() &&
+    Number.isInteger(finding.line) && finding.line > 0 &&
+    typeof finding.title === "string" && finding.title.trim() &&
+    typeof finding.body === "string" && finding.body.trim() &&
+    typeof finding.suggestedVerificationCommand === "string" && finding.suggestedVerificationCommand.trim() &&
+    typeof finding.executionPath === "string" && finding.executionPath.trim() &&
+    typeof finding.counterEvidence === "string" && finding.counterEvidence.trim(),
+  );
+}
 
-    return /^git\s+ls-files(?:\s|$)/i.test(command) && /git\s+ls-files/i.test(claim);
-  }
+const GIT_TRACKING_RELEVANCE_PATTERN =
+  /git\s*ls-files|追跡ファイル|未ステージ|ステージ済み|tracked file|untracked file|pathspec|\.gitignore|インデックスに登録/i;
+const GIT_LS_FILES_COMMAND_PATTERN = /^git\s+ls-files(?:\s|$)/i;
 
-  return false;
+export function verificationSupportsFinding(finding, verificationResult) {
+  if (!verificationResult) return "no_verification";
+  if (!finding.verification || finding.verification.probe !== "git_ls_files") return "irrelevant";
+  const command = finding.suggestedVerificationCommand?.trim() || "";
+  const text = [finding.title, finding.body, finding.executionPath, finding.suggestedVerificationCommand]
+    .filter(Boolean)
+    .join(" ");
+  // 指摘の文面がgit追跡関連の語彙を含み、かつ提案コマンド自体もgit ls-filesである場合のみ関連とみなす
+  if (!GIT_TRACKING_RELEVANCE_PATTERN.test(text) || !GIT_LS_FILES_COMMAND_PATTERN.test(command)) return "irrelevant";
+  if (verificationResult.outcome === "confirmed") return "supports";
+  if (verificationResult.outcome === "contradicted") return "contradicts";
+  return "inconclusive";
+}
+
+function referencesChangedFile(finding, changedFiles) {
+  if (!Array.isArray(changedFiles) || changedFiles.length === 0) return true;
+  return changedFiles.includes(finding.file);
+}
+
+export function computeBuildSucceeded(deterministicChecks, { ownCheckNamePattern = /ai[\s_-]?review/i } = {}) {
+  return (deterministicChecks || []).some((check) =>
+    /build/i.test(check.name || "") &&
+    check.status === "completed" &&
+    check.conclusion === "success" &&
+    !ownCheckNamePattern.test(check.name || ""));
 }
 
 export function parseReviewJson(text, context = {}) {
   const parsed = JSON.parse(text);
   const findings = Array.isArray(parsed.findings) ? parsed.findings : [];
-  const allowedSeverities = new Set(["critical", "high", "medium"]);
+
+  const evaluated = findings.map((finding) => {
+    if (!meetsEvidenceGate(finding)) {
+      return { finding, eligible: false, reason: "insufficient_evidence" };
+    }
+
+    if (!referencesChangedFile(finding, context.changedFiles)) {
+      return { finding, eligible: false, reason: "file_not_in_diff" };
+    }
+
+    let verificationResult = null;
+    let verificationRelevance = "no_verification";
+    if (finding.verification) {
+      verificationResult = (context.verifyProbe || runVerificationProbe)(finding.verification);
+      verificationRelevance = verificationSupportsFinding(finding, verificationResult);
+    }
+
+    if (verificationRelevance === "contradicts") {
+      return { finding, eligible: false, reason: "verification_contradicted", verificationResult, verificationRelevance };
+    }
+
+    if (finding.category === "compilation_error" && context.buildSucceeded) {
+      const hasReference = (context.deletedSymbolReferences || []).some(({ symbol }) =>
+        finding.body?.includes(symbol) || finding.title?.includes(symbol));
+      if (!hasReference) {
+        return { finding, eligible: false, reason: "compilation_error_unconfirmed", verificationResult, verificationRelevance };
+      }
+    }
+
+    return { finding, eligible: true, verificationResult, verificationRelevance };
+  });
+
+  let adoptedSoFar = 0;
+  const candidates = evaluated.map((item) => {
+    if (!item.eligible) {
+      return {
+        adopted: false,
+        reason: item.reason,
+        verificationRelevance: item.verificationRelevance || "no_verification",
+        verificationResult: item.verificationResult || null,
+        finding: item.finding,
+      };
+    }
+    adoptedSoFar += 1;
+    const adopted = adoptedSoFar <= 3;
+    return {
+      adopted,
+      reason: adopted ? "adopted" : "adopted_but_capped_at_3",
+      verificationRelevance: item.verificationRelevance,
+      verificationResult: item.verificationResult,
+      finding: item.finding,
+    };
+  });
+
+  const findingsOut = candidates
+    .filter((candidate) => candidate.reason === "adopted")
+    .map((candidate) => ({
+      ...candidate.finding,
+      verificationResult: candidate.verificationResult,
+      verificationRelevance: candidate.verificationRelevance,
+    }));
 
   return {
     status: parsed.status || "completed",
-    findings: findings
-      .map((finding) => {
-        const verified =
-          finding &&
-          finding.confidence === "high" &&
-          allowedSeverities.has(finding.severity) &&
-          typeof finding.file === "string" && finding.file.length > 0 &&
-          Number.isInteger(finding.line) && finding.line > 0 &&
-          typeof finding.suggestedVerificationCommand === "string" && finding.suggestedVerificationCommand.length > 0 &&
-          finding.verification && typeof finding.verification === "object" &&
-          typeof finding.executionPath === "string" && finding.executionPath.length > 0 &&
-          typeof finding.counterEvidence === "string" && finding.counterEvidence.length > 0;
-        if (!verified) return null;
-        if (!verificationSupportsFinding(finding)) return null;
-        const verificationResult = (context.verifyProbe || runVerificationProbe)(finding.verification);
-        if (!verificationResult?.verified) return null;
-        if (finding.category === "compilation_error" && context.buildSucceeded) {
-          const hasReference = (context.deletedSymbolReferences || []).some(({ symbol }) =>
-            finding.body?.includes(symbol) || finding.title?.includes(symbol));
-          if (!hasReference) return null;
-        }
-        return { ...finding, verificationResult };
-      })
-      .filter(Boolean)
-      .slice(0, 3),
+    findings: findingsOut,
+    diagnostics: {
+      candidateCount: findings.length,
+      adoptedCount: findingsOut.length,
+      candidates: candidates.map((candidate, index) => ({ index, ...candidate })),
+    },
   };
 }
+
+// OpenAI Structured Outputs (strict:true) はmaxItems/minItems/minimum/maximum等の制約キーワードを
+// 未サポートで、含めるとリクエストが拒否される。件数上限(3件)はparseReviewJson側のcap、
+// line>0はmeetsEvidenceGate、verification.arguments<=10はrunVerificationProbeで別途検証済みなので
+// スキーマからは制約キーワードを外す。
+export const reviewResponseSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["status", "findings"],
+  properties: {
+    status: { type: "string", enum: ["completed"] },
+    findings: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["severity", "confidence", "category", "file", "line", "title", "body", "suggestedVerificationCommand", "verification", "executionPath", "counterEvidence"],
+        properties: {
+          severity: { type: "string", enum: ["critical", "high", "medium"] },
+          confidence: { type: "string", enum: ["high", "medium", "low"] },
+          category: { type: "string", enum: ["compilation_error", "runtime_bug", "security", "data_loss", "test_gap"] },
+          file: { type: "string" },
+          line: { type: "integer" },
+          title: { type: "string" },
+          body: { type: "string" },
+          suggestedVerificationCommand: { type: "string" },
+          verification: {
+            type: ["object", "null"],
+            additionalProperties: false,
+            required: ["probe", "arguments", "expected"],
+            properties: {
+              probe: { type: "string", enum: ["git_ls_files"] },
+              arguments: {
+                type: "array",
+                items: { type: "string" },
+              },
+              expected: {
+                type: "string",
+                enum: ["unstaged_tracked_file_is_included", "unstaged_tracked_file_is_excluded"],
+              },
+            },
+          },
+          executionPath: { type: "string" },
+          counterEvidence: { type: "string" },
+        },
+      },
+    },
+  },
+};
