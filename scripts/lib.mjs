@@ -8,7 +8,9 @@ export const resultPath = `${outputDir}/result.json`;
 export const commentPath = `${outputDir}/comment.md`;
 export const diagnosticsPath = `${outputDir}/diagnostics.json`;
 
-const MAX_BUFFER_BYTES = 20 * 1024 * 1024;
+// エンジン同梱PRなどの巨大diffでNodeデフォルトの1MiBを超えると
+// ENOBUFSでクラッシュするため、バッファ上限を引き上げる
+const MAX_BUFFER_BYTES = 64 * 1024 * 1024;
 
 const excludedDiffPathspecs = [
   ":(exclude,glob)**/*.md",
@@ -346,14 +348,17 @@ export function meetsEvidenceGate(finding) {
 
 const GIT_TRACKING_RELEVANCE_PATTERN =
   /git\s*ls-files|追跡ファイル|未ステージ|ステージ済み|tracked file|untracked file|pathspec|\.gitignore|インデックスに登録/i;
+const GIT_LS_FILES_COMMAND_PATTERN = /^git\s+ls-files(?:\s|$)/i;
 
 export function verificationSupportsFinding(finding, verificationResult) {
   if (!verificationResult) return "no_verification";
   if (!finding.verification || finding.verification.probe !== "git_ls_files") return "irrelevant";
+  const command = finding.suggestedVerificationCommand?.trim() || "";
   const text = [finding.title, finding.body, finding.executionPath, finding.suggestedVerificationCommand]
     .filter(Boolean)
     .join(" ");
-  if (!GIT_TRACKING_RELEVANCE_PATTERN.test(text)) return "irrelevant";
+  // 指摘の文面がgit追跡関連の語彙を含み、かつ提案コマンド自体もgit ls-filesである場合のみ関連とみなす
+  if (!GIT_TRACKING_RELEVANCE_PATTERN.test(text) || !GIT_LS_FILES_COMMAND_PATTERN.test(command)) return "irrelevant";
   if (verificationResult.outcome === "confirmed") return "supports";
   if (verificationResult.outcome === "contradicted") return "contradicts";
   return "inconclusive";

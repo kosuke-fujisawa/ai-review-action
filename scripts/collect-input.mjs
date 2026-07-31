@@ -15,10 +15,16 @@ const maxDiffChars = Number(process.env.AI_REVIEW_MAX_DIFF_CHARS || 30_000);
 const baseRef = process.env.GITHUB_BASE_REF ? `origin/${process.env.GITHUB_BASE_REF}` : "HEAD^";
 
 let diff = "";
+let diffUnavailable = false;
 try {
   diff = runGit(buildDiffArgs(`${baseRef}...HEAD`));
 } catch {
-  diff = runGit(buildDiffArgs("HEAD^...HEAD"));
+  try {
+    diff = runGit(buildDiffArgs("HEAD^...HEAD"));
+  } catch {
+    // diff取得に失敗した場合(maxBuffer超過等)はジョブを落とさずスキップさせる
+    diffUnavailable = true;
+  }
 }
 
 const agentFiles = listTrackedFiles(["AGENTS.md", "**/AGENTS.md"]).slice(0, 3);
@@ -45,6 +51,7 @@ writeJson(inputPath, {
   agentInstructions,
   diff: budgetedDiff.text,
   diffTruncated: budgetedDiff.truncated,
+  diffUnavailable,
   changedFiles: budgetedDiff.files,
   diffStats: budgetedDiff.fileStats,
   deletedSymbolReferences,

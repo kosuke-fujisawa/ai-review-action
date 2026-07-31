@@ -1,4 +1,8 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 import {
   buildDiffArgs,
@@ -7,6 +11,7 @@ import {
   collectPaginatedItems,
   extractDeletedSymbols,
   parseReviewJson,
+  runGit,
   runVerificationProbe,
   shouldSkipReview,
   truncateText,
@@ -266,6 +271,7 @@ test("parseReviewJsonはプローブ結果が期待と矛盾する指摘を棄�
   const finding = baseFinding({
     title: "追跡ファイル一覧の誤り",
     body: "git ls-filesの未ステージ追跡ファイル列挙が期待と異なります。",
+    suggestedVerificationCommand: "git ls-files --cached '*.swift'",
     verification: { probe: "git_ls_files", arguments: ["--cached", "*.swift"], expected: "unstaged_tracked_file_is_excluded" },
   });
 
@@ -359,6 +365,28 @@ test("runVerificationProbeは未許可オプションや未知の期待値を実
   assert.equal(runVerificationProbe({ probe: "git_ls_files", arguments: ["--cached"], expected: "arbitrary_claim" }, runner).verified, false);
   assert.equal(runVerificationProbe({ probe: "git_ls_files", arguments: Array(11).fill("*.swift"), expected: "unstaged_tracked_file_is_included" }, runner).verified, false);
   assert.equal(executed, false);
+});
+
+test("runGitはNodeデフォルトのmaxBuffer(1MiB)を超えるdiffでも取得できる", () => {
+  const repoDir = mkdtempSync(join(tmpdir(), "ai-review-large-diff-"));
+  const cwd = process.cwd();
+  try {
+    process.chdir(repoDir);
+    const git = (...args) => execFileSync("git", args, { encoding: "utf8" });
+    git("init", "-q");
+    git("-c", "user.email=test@example.com", "-c", "user.name=test", "commit", "-q", "--allow-empty", "-m", "init");
+    // 2MiB超の追加行を持つdiffを作る(エンジン同梱PR相当)
+    writeFileSync("big.js", "const line = 1;\n".repeat(140_000));
+    git("add", "big.js");
+
+    const diff = runGit(["diff", "--cached"]);
+
+    assert.ok(diff.length > 1024 * 1024);
+    assert.match(diff, /^diff --git a\/big\.js b\/big\.js/m);
+  } finally {
+    process.chdir(cwd);
+    rmSync(repoDir, { recursive: true, force: true });
+  }
 });
 
 test("buildDiffArgsは少ない文脈で自動生成物と文書を除外する", () => {
