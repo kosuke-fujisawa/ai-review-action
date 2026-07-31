@@ -43,6 +43,20 @@ test("budgetDiffByFileはコード拡張子を低価値拡張子より優先し�
   assert.ok(codeStats.keptChars > lowValueStats.keptChars);
 });
 
+test("budgetDiffByFileはファイル数が多い場合MIN_FILE_BUDGETの下限適用で合計がmaxCharsを大幅に超えないようにする", () => {
+  const sections = Array.from({ length: 100 }, (_, index) =>
+    `diff --git a/d/f${index}.json b/d/f${index}.json\n@@ -1 +1 @@\n-old\n+` + "x".repeat(500));
+  const diff = sections.join("\n");
+
+  const result = budgetDiffByFile(diff, 2000);
+
+  assert.equal(result.truncated, true);
+  const totalKept = result.fileStats.reduce((sum, stat) => sum + stat.keptChars, 0);
+  // 下限(200文字)を全100ファイルへ適用すると20000文字を要求してしまうため、
+  // 下限を諦めて比例配分のみに従うことでmaxChars近傍に収まることを確認する
+  assert.ok(totalKept < 6000, `keptChars合計が予算に対して大きすぎます: ${totalKept}`);
+});
+
 test("extractDeletedSymbolsは削除された型とメソッドを抽出する", () => {
   const diff = `diff --git a/A.swift b/A.swift\n--- a/A.swift\n+++ b/A.swift\n-class LegacyStore {\n-  func loadLegacy() {}\n+class Store {}`;
 
@@ -202,6 +216,35 @@ test("parseReviewJsonはfile・line・executionPath・counterEvidenceが欠け�
   assert.deepEqual(result.findings, []);
   assert.equal(result.diagnostics.candidateCount, cases.length);
   assert.ok(result.diagnostics.candidates.every((candidate) => candidate.reason === "insufficient_evidence"));
+});
+
+test("parseReviewJsonはchangedFilesに含まれないファイルへの指摘を棄却する", () => {
+  const finding = baseFinding({ file: "src/not-in-diff.js" });
+
+  const result = parseReviewJson(JSON.stringify({ status: "completed", findings: [finding] }), {
+    changedFiles: ["src/other.js", "src/another.js"],
+  });
+
+  assert.deepEqual(result.findings, []);
+  assert.equal(result.diagnostics.candidates[0].reason, "file_not_in_diff");
+});
+
+test("parseReviewJsonはchangedFilesに含まれるファイルへの指摘を採用する", () => {
+  const finding = baseFinding({ file: "src/example.js" });
+
+  const result = parseReviewJson(JSON.stringify({ status: "completed", findings: [finding] }), {
+    changedFiles: ["src/example.js", "src/other.js"],
+  });
+
+  assert.equal(result.findings.length, 1);
+});
+
+test("parseReviewJsonはchangedFilesが渡されない場合ファイル照合をスキップする(後方互換)", () => {
+  const finding = baseFinding({ file: "src/anything.js" });
+
+  const result = parseReviewJson(JSON.stringify({ status: "completed", findings: [finding] }));
+
+  assert.equal(result.findings.length, 1);
 });
 
 test("parseReviewJsonは無関係なgit_ls_filesプローブを根拠として扱わない", () => {

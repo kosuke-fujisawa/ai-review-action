@@ -12,6 +12,15 @@ test("reviewResponseSchemaはverificationをnull許容にしつつrequiredのま
   assert.deepEqual(verification.properties.probe.enum, ["git_ls_files"]);
 });
 
+test("reviewResponseSchemaはOpenAI strict modeが未対応の制約キーワードを含まない", () => {
+  const findingsArraySchema = reviewResponseSchema.properties.findings;
+  const findingSchema = findingsArraySchema.items;
+
+  assert.equal(findingsArraySchema.maxItems, undefined);
+  assert.equal(findingSchema.properties.line.minimum, undefined);
+  assert.equal(findingSchema.properties.verification.properties.arguments.maxItems, undefined);
+});
+
 test("computeBuildSucceededはbuildを含み成功したcheckがあればtrue", () => {
   const checks = [{ name: "Build", status: "completed", conclusion: "success" }];
   assert.equal(computeBuildSucceeded(checks), true);

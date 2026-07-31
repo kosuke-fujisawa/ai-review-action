@@ -100,10 +100,12 @@ export function budgetDiffByFile(diff, maxChars) {
   const weights = files.map(weightOf);
   const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
   const fileStats = [];
+  // 全ファイルに下限を配れない場合は下限を諦めて比例配分のみに従う(合計がmaxChars超過するのを防ぐ)
+  const minBudget = MIN_FILE_BUDGET * sections.length <= maxChars ? MIN_FILE_BUDGET : 0;
 
   const rendered = sections.map((section, index) => {
     const file = files[index];
-    const perFileBudget = Math.max(MIN_FILE_BUDGET, Math.floor((maxChars * weights[index]) / totalWeight));
+    const perFileBudget = Math.max(minBudget, Math.floor((maxChars * weights[index]) / totalWeight));
     if (section.length <= perFileBudget) {
       fileStats.push({ file, originalChars: section.length, keptChars: section.length, omittedChars: 0, tier: tierOf(file) });
       return section;
@@ -357,6 +359,11 @@ export function verificationSupportsFinding(finding, verificationResult) {
   return "inconclusive";
 }
 
+function referencesChangedFile(finding, changedFiles) {
+  if (!Array.isArray(changedFiles) || changedFiles.length === 0) return true;
+  return changedFiles.includes(finding.file);
+}
+
 export function computeBuildSucceeded(deterministicChecks, { ownCheckNamePattern = /ai[\s_-]?review/i } = {}) {
   return (deterministicChecks || []).some((check) =>
     /build/i.test(check.name || "") &&
@@ -371,6 +378,10 @@ export function parseReviewJson(text, context = {}) {
   const evaluated = findings.map((finding) => {
     if (!meetsEvidenceGate(finding)) {
       return { finding, eligible: false, reason: "insufficient_evidence" };
+    }
+
+    if (!referencesChangedFile(finding, context.changedFiles)) {
+      return { finding, eligible: false, reason: "file_not_in_diff" };
     }
 
     let verificationResult = null;
@@ -436,6 +447,10 @@ export function parseReviewJson(text, context = {}) {
   };
 }
 
+// OpenAI Structured Outputs (strict:true) はmaxItems/minItems/minimum/maximum等の制約キーワードを
+// 未サポートで、含めるとリクエストが拒否される。件数上限(3件)はparseReviewJson側のcap、
+// line>0はmeetsEvidenceGate、verification.arguments<=10はrunVerificationProbeで別途検証済みなので
+// スキーマからは制約キーワードを外す。
 export const reviewResponseSchema = {
   type: "object",
   additionalProperties: false,
@@ -444,7 +459,6 @@ export const reviewResponseSchema = {
     status: { type: "string", enum: ["completed"] },
     findings: {
       type: "array",
-      maxItems: 3,
       items: {
         type: "object",
         additionalProperties: false,
@@ -454,7 +468,7 @@ export const reviewResponseSchema = {
           confidence: { type: "string", enum: ["high", "medium", "low"] },
           category: { type: "string", enum: ["compilation_error", "runtime_bug", "security", "data_loss", "test_gap"] },
           file: { type: "string" },
-          line: { type: "integer", minimum: 1 },
+          line: { type: "integer" },
           title: { type: "string" },
           body: { type: "string" },
           suggestedVerificationCommand: { type: "string" },
@@ -467,7 +481,6 @@ export const reviewResponseSchema = {
               arguments: {
                 type: "array",
                 items: { type: "string" },
-                maxItems: 10,
               },
               expected: {
                 type: "string",

@@ -136,6 +136,7 @@ const buildSucceeded = computeBuildSucceeded(input.deterministicChecks);
 const parsed = parseReviewJson(extractResponseText(data), {
   buildSucceeded,
   deletedSymbolReferences: input.deletedSymbolReferences || [],
+  changedFiles: input.changedFiles || [],
 });
 const { diagnostics, ...result } = parsed;
 
